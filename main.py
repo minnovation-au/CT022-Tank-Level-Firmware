@@ -1,16 +1,7 @@
-################## Start setup (EDIT START HERE)
-
-SITE = 'SRCL'
-key = b'alphaxencryptkeysjtwbutfdchdlcec' # 256 bit (32 bytes) key
-
-################## End setup (EDIT END HERE)
-
-import socket, os, pycom, crypto, socket, gc, machine, utime, ubinascii, ustruct
+import socket, os, pycom, crypto, socket, gc, machine, utime, ubinascii
 from machine import SD, WDT, deepsleep, Pin, Timer
 from network import LoRa, WLAN
 from crypto import AES
-from uModBus.serial import Serial
-from uModBus.tcp import TCP
 
 iv = crypto.getrandbits(128) # hardware generated random IV (never reuse it)
 
@@ -25,39 +16,35 @@ w = WLAN()
 chrono = Timer.Chrono()
 chrono.start()
 
+echo = Pin('P9', mode=Pin.IN)
+trigger = Pin('P10', mode=Pin.OUT)
 volt = adc.channel(pin='P20')
 
 pycom.heartbeat(False)
 pycom.rgbled(0x007f00) # Turn on Green LED
 
 def getVoltage():
-    val = volt()/4095*4.2
+    val = volt.voltage()
+    val = (val*4.2)/1000
     return(val)
 
 print(getVoltage())
 
-def getPressure():
-    uart_id = 0x01
-    modbus_obj = Serial(uart_id, pins=('P10', 'P9'))
-
-    slave_addr=1
-    starting_address=62594
-    register_quantity=1
-    signed=True
-    result=''
-
-    for y in range(0,2):
-        try:
-            register_value = modbus_obj.read_holding_registers(slave_addr, starting_address, register_quantity, signed)
-            #print(register_value)
-            #print(bytes(register_value[1]))
-            result = ustruct.unpack('>f', register_value)
-            #print(result[0])
-            #print(result[1]-14.7)
-        except Exception as e:
-            pass
-        utime.sleep(1)
-    return(result[0])
+def getDistance():
+    val=0
+    chrono.reset()
+    trigger(1)
+    utime.sleep_us(10)
+    trigger(0)
+    while echo() == 0:
+        pass
+    chrono.start()
+    while echo() == 1:
+        pass
+    chrono.stop()
+    val = chrono.read_us() / 58.0
+    val=((Tank_Height-val)/Tank_Height)*100
+    return(val)
 
 def aggregate():
     try:
@@ -135,10 +122,9 @@ def LoRaSend(val):
 pycom.rgbled(0) # Turn on Green LED
 lora = LoRa(mode=LoRa.LORA, region=LoRa.AU915, power_mode=LoRa.TX_ONLY)
 sl = socket.socket(socket.AF_LORA, socket.SOCK_RAW)
-LoRaSend('{"val":'+str(getPressure())+',"volt":'+str(getVoltage())+',"msgID":'+str(lora.stats()[8])+'}')
-print('Send: {"val":'+str(getPressure())+',"volt":'+str(getVoltage())+',"msgID":'+str(lora.stats()[8])+'}')
+LoRaSend('{"val":'+str(getDistance())+',"volt":'+str(getVoltage())+',"msgID":'+str(lora.stats()[8])+'}')
 lora = LoRa(mode=LoRa.LORA, region=LoRa.AU915, power_mode=LoRa.SLEEP)
-print(getPressure())
+print('Send: {"val":'+str(getDistance())+',"volt":'+str(getVoltage())+',"msgID":'+str(lora.stats()[8])+'}')
 print('Sleeping')
 wdt.feed()
-#machine.deepsleep(3600000)
+machine.deepsleep(3600000)
